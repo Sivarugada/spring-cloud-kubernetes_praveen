@@ -1,90 +1,195 @@
 @Library('jenkins-shared-library@main') _
+
 pipeline {
 
-  agent any
-  
-  parameters {
-	choice(name: 'action', choices: 'create\nrollback', description: 'Create/rollback of the deployment')
-    string(name: 'ImageName', description: "Name of the docker build", defaultValue: "kubernetes-configmap-reload")
-	string(name: 'ImageTag', description: "Name of the docker build",defaultValue: "v1")
-	string(name: 'AppName', description: "Name of the Application",defaultValue: "kubernetes-configmap-reload")
-    string(name: 'docker_repo', description: "Name of docker repository",defaultValue: "praveensingam1994")
-  }
-      
-  tools{ 
+    agent any
+
+    parameters {
+
+        choice(
+            name: 'action',
+            choices: 'create\nrollback',
+            description: 'Create/rollback deployment'
+        )
+
+        string(
+            name: 'ImageName',
+            description: 'Docker image name',
+            defaultValue: 'kubernetes-configmap-reload'
+        )
+
+        string(
+            name: 'ImageTag',
+            description: 'Docker image tag',
+            defaultValue: 'v1'
+        )
+
+        string(
+            name: 'AppName',
+            description: 'Application name',
+            defaultValue: 'kubernetes-configmap-reload'
+        )
+
+        string(
+            name: 'docker_repo',
+            description: 'Docker repository name',
+            defaultValue: 'sivarugada'
+        )
+    }
+
+    tools {
+        jdk 'jdk17'
         maven 'maven3'
     }
+
+    environment {
+        JAVA_HOME = tool 'jdk17'
+        PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
+    }
+
     stages {
-        stage('Git Checkout') {
-            when {
-				expression { params.action == 'create' }
-			}
+
+        stage('Check Java and Maven Version') {
             steps {
+                sh 'java -version'
+                sh 'javac -version'
+                sh 'mvn -version'
+            }
+        }
+
+        stage('Git Checkout') {
+
+            when {
+                expression { params.action == 'create' }
+            }
+
+            steps {
+
                 gitCheckout(
                     branch: "main",
-                    url: "https://github.com/praveen1994dec/spring-cloud-kubernetes.git"
+                    url: "https://github.com/Sivarugada/spring-cloud-kubernetes_praveen.git"
                 )
             }
         }
-        stage('Build Maven'){
+
+        stage('Build Maven') {
+
             when {
-				expression { params.action == 'create' }
-			}
-    		steps {
-        		dir("${params.AppName}") {
-        			sh 'mvn clean package'
-        		}
-    		}
-	    }
-	    stage("Docker Build and Push") {
-	        when {
-				expression { params.action == 'create' }
-			}
-	        steps {
-	            dir("${params.AppName}") {
-	                dockerBuild ( "${params.ImageName}", "${params.docker_repo}" )
-	            }
-	        }
-	    }
-	 //    stage("Docker CleanUP") {
-	 //        when {
-		// 		expression { params.action == 'create' }
-		// 	}
-	 //        steps {
-	 //            dockerCleanup ( "${params.ImageName}", "${params.docker_repo}" )
-		// 	}
-		// }
-			    stage("Ansible Setup") {
-	        when {
-				expression { params.action == 'create' }
-			}
-	        steps {
-	            sh 'ansible-playbook ${WORKSPACE}/kubernetes-configmap-reload/server_setup.yml'
-			}
-		}
-	    stage("Create deployment") {
-			when {
-				expression { params.action == 'create' }
-			}
-	        steps {
-	            sh 'echo ${WORKSPACE}'
-	            sh 'kubectl create -f ${WORKSPACE}/kubernetes-configmap-reload/kubernetes-configmap.yml'
-	        }
-	    }
-	    stage ("wait_for_pods"){
-	    steps{
-              
-                sh 'sleep 300'
-             
-	    }
-	    }
-		stage("rollback deployment") {
-	        steps {	            	         	           
-	              sh """
-	                   kubectl delete deploy ${params.AppName}
-					    kubectl delete svc ${params.AppName}
-				  """	       
-	        }
-	    }
+                expression { params.action == 'create' }
+            }
+
+            steps {
+
+                dir("${params.AppName}") {
+
+                    sh '''
+                        echo "Current Java Version"
+                        java -version
+
+                        echo "Current Maven Version"
+                        mvn -version
+
+                        mvn clean package -DskipTests
+                    '''
+                }
+            }
+        }
+
+        stage("Docker Build and Push") {
+
+            when {
+                expression { params.action == 'create' }
+            }
+
+            steps {
+
+                dir("${params.AppName}") {
+
+                    dockerBuild(
+                        "${params.ImageName}",
+                        "${params.docker_repo}"
+                    )
+                }
+            }
+        }
+
+        stage("Ansible Setup") {
+
+            when {
+                expression { params.action == 'create' }
+            }
+
+            steps {
+
+                sh """
+                    ansible-playbook ${WORKSPACE}/kubernetes-configmap-reload/server_setup.yml
+                """
+            }
+        }
+
+        stage("Create Deployment") {
+
+            when {
+                expression { params.action == 'create' }
+            }
+
+            steps {
+
+                sh """
+                    kubectl apply -f ${WORKSPACE}/kubernetes-configmap-reload/kubernetes-configmap.yml
+                """
+            }
+        }
+
+        stage("Wait For Pods") {
+
+            when {
+                expression { params.action == 'create' }
+            }
+
+            steps {
+
+                sh '''
+                    echo "Waiting for pods to come up..."
+                    sleep 60
+
+                    kubectl get pods
+                '''
+            }
+        }
+
+        stage("Rollback Deployment") {
+
+            when {
+                expression { params.action == 'rollback' }
+            }
+
+            steps {
+
+                sh """
+                    kubectl delete deploy ${params.AppName} --ignore-not-found=true
+
+                    kubectl delete svc ${params.AppName} --ignore-not-found=true
+                """
+            }
+        }
+    }
+
+    post {
+
+        always {
+
+            echo 'Pipeline Execution Completed'
+        }
+
+        success {
+
+            echo 'Build Success'
+        }
+
+        failure {
+
+            echo 'Build Failed'
+        }
     }
 }
